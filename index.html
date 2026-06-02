@@ -1,42 +1,143 @@
- // ボタンを押した時の動き（ここを二段構えの構造に変える！）
-    micBtn.addEventListener('click', async () => {
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sky DATA - 音声入力コンソール</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+        h1 { margin-bottom: 5px; color: #38bdf8; }
+        .subtitle { font-size: 14px; color: #94a3b8; margin-bottom: 40px; }
+        #micButton { width: 120px; height: 120px; border-radius: 50%; background-color: #e11d48; border: none; font-size: 50px; cursor: pointer; box-shadow: 0 10px 25px rgba(225,29,72,0.5); transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; }
+        #micButton.recording { background-color: #10b981; box-shadow: 0 10px 25px rgba(16,185,129,0.5); animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        #status { margin-top: 30px; font-size: 16px; font-weight: bold; text-align: center; min-height: 24px; padding: 0 20px;}
+        .footer { margin-top: 40px; font-size: 12px; color: #475569; }
+    </style>
+</head>
+<body>
+
+    <h1>Sky DATA</h1>
+    <p class="subtitle">Ao Inc. Enterprise Voice System</p>
+    
+    <button id="micButton">🎙️</button>
+    
+    <div id="status">ボタンを押して話し始めてください</div>
+    <div class="footer">Powered by Kabushiki Gaisha Ao</div>
+
+<script>
+    // ⚠️ お前のMakeのWebhook URL
+    const MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/mcllmrv3b8zqvjhc7kv9nsdweshde5sh";
+
+    const micButton = document.getElementById('micButton');
+    const statusText = document.getElementById('status');
+
+    let recognition;
+    let isForceLoop = false; // 2分間強制ループフラグ
+    let fullTranscript = ""; // 全ての内容を蓄積する部屋
+    let sendTimeout = null; // 2分タイマー
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+        statusText.innerHTML = "※このブラウザは音声認識に未対応です。";
+        micButton.disabled = true;
+    } else {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ja-JP';
+        recognition.interimResults = false;
+        recognition.continuous = true;
+
+        // 録音データが入ってきたとき
+        recognition.onresult = (event) => {
+            let currentText = "";
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    currentText += event.results[i][0].transcript;
+                }
+            }
+            if (currentText) {
+                fullTranscript += currentText + " ";
+                statusText.innerText = fullTranscript; // 画面に今喋った文字を出す
+            }
+        };
+
+        // 💥ブラウザが勝手に「沈黙」で切ったときの強制再起動ハック！！
+        recognition.onend = () => {
+            if (isForceLoop) {
+                setTimeout(() => {
+                    try { recognition.start(); } catch(e) {}
+                }, 100);
+            }
+        };
+    }
+
+    // ボタンを押した時の動き（Bluetooth強制覚醒 ＆ 2分タイマー）
+    micButton.addEventListener('click', async () => {
         if (!isForceLoop) {
             
-            // 🚨【第1段階】iPhoneに「今繋がってる最強のマイク（イヤホン）を使わせろ」と強制命令を出す！
+            // 🚨【第1段階】Bluetoothマイク回線を強制確保！
             try {
-                statusDiv.innerText = "マイク回線を接続中...";
-                // これを実行することで、iOSの音声ルーティングをBluetooth側に強制的に引っ張ってくる！！
-                const audioStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true
-                    } 
-                });
-                
-                // 回線が確保できたら、一旦ストリームは裏で生かしたままにするか、認識に渡す
-                console.log("Bluetoothマイクの奪取に成功！");
+                statusText.innerText = "マイク回線を接続中...";
+                await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
             } catch (err) {
-                console.error("マイクの強制確保に失敗:", err);
-                statusDiv.innerText = "❌ マイクの接続に失敗しました";
+                console.error(err);
+                statusText.innerText = "❌ マイクの接続に失敗しました";
                 return;
             }
 
             // 🚀【第2段階】イヤホンマイクが覚醒した状態で、2分間の死闘を開始！
             isForceLoop = true;
             fullTranscript = "";
-            resultDiv.innerText = "聴取中...";
-            micBtn.classList.add('recording');
-            micBtn.innerText = "認識中...";
-            statusDiv.innerText = "イヤホンマイクで収音中（2分間ホールド）";
+            micButton.classList.add('recording');
+            statusText.innerText = "イヤホンで収音中... (2分間ホールド)";
 
             try { recognition.start(); } catch(e) {}
 
-            // ⏱️ ぴったり2分後に強制送信タイマー起動！！
+            // ⏱️ ぴったり2分（120,000ミリ秒）後に強制送信タイマー起動！！
             sendTimeout = setTimeout(() => {
                 stopAndSend();
             }, 120000); 
 
         } else {
+            // 途中でお前が手動で止めたくなったら、ボタンをもう一回押せば即送信される
             stopAndSend();
         }
     });
+
+    // 💥 2分経ったか、手動で止められた時にMakeへ投げる関数
+    function stopAndSend() {
+        if (!isForceLoop) return;
+        isForceLoop = false;
+        clearTimeout(sendTimeout); // タイマー解除
+        
+        try { recognition.stop(); } catch(e) {}
+        
+        micButton.classList.remove('recording');
+        statusText.innerText = "Makeへ送信中...";
+
+        if (!fullTranscript.trim()) {
+            statusText.innerText = "❌ 何も聞き取れませんでした";
+            return;
+        }
+
+        // Makeへ全力投球！
+        fetch(MAKE_WEBHOOK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: fullTranscript.trim() })
+        })
+        .then(response => {
+            if(response.ok) {
+                statusText.innerText = "✅ 2分間のデータ送信完了！";
+            } else {
+                statusText.innerText = "❌ 送信に失敗しました";
+            }
+        })
+        .catch(error => {
+            statusText.innerText = "❌ ネットワークエラーです";
+        });
+    }
+</script>
+</body>
+</html>
