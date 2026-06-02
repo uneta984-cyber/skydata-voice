@@ -1,156 +1,42 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Sky DATA - 音声入力コンソール</title>
-  <style>
-    body {
-      font-family: 'Helvetica Neue', Arial, sans-serif;
-      background-color: #0f172a;
-      color: #f8fafc;
-      margin: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-    }
-    .container {
-      text-align: center;
-      width: 90%;
-      max-width: 400px;
-    }
-    h1 {
-      font-size: 24px;
-      margin-bottom: 5px;
-      color: #38bdf8;
-    }
-    p.subtitle {
-      font-size: 12px;
-      color: #94a3b8;
-      margin-bottom: 40px;
-    }
-    #micButton {
-      background: linear-gradient(135deg, #0284c7, #2563eb);
-      color: white;
-      border: none;
-      border-radius: 50%;
-      width: 120px;
-      height: 120px;
-      font-size: 40px;
-      box-shadow: 0 10px 25px rgba(37, 99, 235, 0.5);
-      cursor: pointer;
-      transition: transform 0.2s, box-shadow 0.2s;
-    }
-    #micButton:active {
-      transform: scale(0.95);
-      box-shadow: 0 5px 15px rgba(37, 99, 235, 0.5);
-    }
-    #micButton.recording {
-      background: linear-gradient(135deg, #e11d48, #be123c);
-      animation: pulse 1.5s infinite;
-    }
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.7); }
-      70% { box-shadow: 0 0 0 20px rgba(225, 29, 72, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); }
-    }
-    #status {
-      margin-top: 30px;
-      font-size: 16px;
-      min-height: 24px;
-      color: #cbd5e1;
-    }
-    .footer {
-      margin-top: 50px;
-      font-size: 10px;
-      color: #475569;
-    }
-  </style>
-</head>
-<body>
+ // ボタンを押した時の動き（ここを二段構えの構造に変える！）
+    micBtn.addEventListener('click', async () => {
+        if (!isForceLoop) {
+            
+            // 🚨【第1段階】iPhoneに「今繋がってる最強のマイク（イヤホン）を使わせろ」と強制命令を出す！
+            try {
+                statusDiv.innerText = "マイク回線を接続中...";
+                // これを実行することで、iOSの音声ルーティングをBluetooth側に強制的に引っ張ってくる！！
+                const audioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    } 
+                });
+                
+                // 回線が確保できたら、一旦ストリームは裏で生かしたままにするか、認識に渡す
+                console.log("Bluetoothマイクの奪取に成功！");
+            } catch (err) {
+                console.error("マイクの強制確保に失敗:", err);
+                statusDiv.innerText = "❌ マイクの接続に失敗しました";
+                return;
+            }
 
-  <div class="container">
-    <h1>Sky DATA</h1>
-    <p class="subtitle">Ao Inc. Enterprise Voice System</p>
+            // 🚀【第2段階】イヤホンマイクが覚醒した状態で、2分間の死闘を開始！
+            isForceLoop = true;
+            fullTranscript = "";
+            resultDiv.innerText = "聴取中...";
+            micBtn.classList.add('recording');
+            micBtn.innerText = "認識中...";
+            statusDiv.innerText = "イヤホンマイクで収音中（2分間ホールド）";
 
-    <button id="micButton">🎙️</button>
-    
-    <div id="status">ボタンを押して話し始めてください</div>
-    
-    <div class="footer">Powered by Kabushiki Gaisha Ao</div>
-  </div>
+            try { recognition.start(); } catch(e) {}
 
-  <script>
-    // ⚠️【超重要】お前のMakeのWebhook URLをここに貼り付けろ！！
-    const MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/mcllmrv3b8zqvjhc7kv9nsdweshde5sh";
+            // ⏱️ ぴったり2分後に強制送信タイマー起動！！
+            sendTimeout = setTimeout(() => {
+                stopAndSend();
+            }, 120000); 
 
-    const micButton = document.getElementById('micButton');
-    const statusText = document.getElementById('status');
-
-    // 音声認識の設定 (iPhoneのSafariにも対応させるため webkit を使用)
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
-    if (!SpeechRecognition) {
-      statusText.innerHTML = "※このブラウザは音声認識に未対応です。<br>SafariかChromeを使用してください。";
-      micButton.disabled = true;
-    } else {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'ja-JP';
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-
-      micButton.addEventListener('click', () => {
-        recognition.start();
-      });
-
-      recognition.onstart = () => {
-        micButton.classList.add('recording');
-        statusText.textContent = "音声を聞き取っています...";
-      };
-
-      recognition.onspeechend = () => {
-        recognition.stop();
-        micButton.classList.remove('recording');
-        statusText.textContent = "データ送信中...";
-      };
-
-      recognition.onresult = (event) => {
-        const speechResult = event.results[0][0].transcript;
-        statusText.textContent = `「${speechResult}」を送信中...`;
-        
-        // MakeのWebhookへデータを送信 (POST)
-        sendToMake(speechResult);
-      };
-
-      recognition.onerror = (event) => {
-        micButton.classList.remove('recording');
-        statusText.textContent = `エラーが発生しました: ${event.error}`;
-      };
-    }
-
-    // Makeにデータを送る関数
-    function sendToMake(textData) {
-      fetch(MAKE_WEBHOOK_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ text: textData }) // Make側は「text」という名前で受け取る
-      })
-      .then(response => {
-        if(response.ok) {
-          statusText.textContent = "✅ 送信完了！";
-          setTimeout(() => { statusText.textContent = "ボタンを押して話し始めてください"; }, 3000);
         } else {
-          statusText.textContent = "❌ 送信に失敗しました";
+            stopAndSend();
         }
-      })
-      .catch(error => {
-        statusText.textContent = "❌ ネットワークエラーです";
-      });
-    }
-  </script>
-</body>
-</html>
+    });
